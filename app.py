@@ -2,28 +2,33 @@ from flask import Flask, render_template_string, session, redirect, request
 from flask_socketio import SocketIO, emit
 import requests
 import time
-import threading
 
 app = Flask(__name__)
 app.secret_key = "cryptopilot_vip"
 socketio = SocketIO(app, cors_allowed_origins="*")
 
+# ---------------- CACHE (NEW FIX) ----------------
+latest_price = 0
+
 # ---------------- LIVE PRICE ----------------
 def get_btc():
+    global latest_price
     try:
         url = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=inr"
-        return requests.get(url, timeout=5).json()["bitcoin"]["inr"]
+        price = requests.get(url, timeout=5).json()["bitcoin"]["inr"]
+        latest_price = price
+        return price
     except:
-        return 0
+        return latest_price   # return last known value (NO ZERO, NO LAG)
 
 # ---------------- BACKGROUND STREAM ----------------
 def price_stream():
     while True:
         price = get_btc()
         socketio.emit("price_update", {"btc": price})
-        socketio.sleep(3)   # REAL-TIME STREAM (NO MANUAL REFRESH)
+        socketio.sleep(3)
 
-# ---------------- LOGIN (simple) ----------------
+# ---------------- LOGIN ----------------
 @app.route("/login", methods=["GET","POST"])
 def login():
     if request.method == "POST":
@@ -47,7 +52,13 @@ def logout():
 def home():
     if "user" not in session:
         return redirect("/login")
-    return render_template_string(HTML, user=session["user"])
+
+    # 🔥 NEW FIX: preload value BEFORE page loads
+    initial_price = get_btc()
+
+    return render_template_string(HTML,
+                                  user=session["user"],
+                                  initial_price=initial_price)
 
 # ---------------- UI ----------------
 HTML = """
@@ -66,29 +77,12 @@ body{
     overflow:hidden;
 }
 
-/* SPACE BACKGROUND */
 .bg{
     position:absolute;
     width:100%;
     height:100%;
-    overflow:hidden;
 }
 
-.star{
-    position:absolute;
-    width:2px;
-    height:2px;
-    background:white;
-    opacity:0.3;
-    animation:move 25s linear infinite;
-}
-
-@keyframes move{
-    from{transform:translateY(0);}
-    to{transform:translateY(-1000px);}
-}
-
-/* FLOATING PLANETS */
 .planet{
     position:absolute;
     border-radius:50%;
@@ -106,14 +100,12 @@ body{
     100%{transform:translateY(0);}
 }
 
-/* SIDEBAR */
 .sidebar{
     position:fixed;
     width:260px;
     height:100vh;
     background:rgba(15,23,42,0.9);
     padding:20px;
-    backdrop-filter:blur(10px);
 }
 
 .logo{
@@ -130,7 +122,6 @@ body{
     border-radius:10px;
 }
 
-/* MAIN */
 .main{
     margin-left:280px;
     padding:20px;
@@ -142,7 +133,6 @@ body{
     font-weight:bold;
 }
 
-/* PRICE */
 .price{
     font-size:50px;
     color:#22c55e;
@@ -174,12 +164,15 @@ body{
 <div class="title">Welcome {{user}}</div>
 
 <h2>Bitcoin Live (REAL TIME)</h2>
-<div class="price" id="btc">Connecting...</div>
+
+<!-- 🔥 FIX: show initial price immediately -->
+<div class="price" id="btc">₹ {{initial_price}}</div>
 </div>
 
 <script>
 var socket = io();
 
+/* real-time updates */
 socket.on("price_update", function(data){
     document.getElementById("btc").innerText =
         "₹ " + data.btc.toLocaleString();
@@ -190,12 +183,13 @@ socket.on("price_update", function(data){
 </html>
 """
 
-# ---------------- SOCKET START ----------------
+# ---------------- SOCKET ----------------
 @socketio.on("connect")
 def connect():
-    print("Client connected")
+    # 🔥 FIX: send instant value on connect (no lag)
+    emit("price_update", {"btc": latest_price})
 
-# start background thread
+# start stream
 socketio.start_background_task(price_stream)
 
 # ---------------- RUN ----------------
