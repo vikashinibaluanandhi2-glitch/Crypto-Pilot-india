@@ -1,66 +1,190 @@
 from flask import Flask, request, redirect, session, jsonify
-import urllib.request, json
+import urllib.request, json, sqlite3
 
 app = Flask(__name__)
-app.secret_key = "secret123"   # change later
+app.secret_key = "secret"
 
-# ===== SIMPLE DATABASE (temporary) =====
-users = {}
+# ===== DATABASE =====
+def init_db():
+    conn = sqlite3.connect("users.db")
+    c = conn.cursor()
+    c.execute("CREATE TABLE IF NOT EXISTS users (username TEXT, password TEXT, balance REAL)")
+    conn.commit()
+    conn.close()
 
-# ===== GET CRYPTO =====
+init_db()
+
+# ===== CRYPTO =====
 def get_crypto():
     try:
         url = "https://api.coingecko.com/api/v3/coins/markets?vs_currency=inr"
         response = urllib.request.urlopen(url)
         data = json.loads(response.read())
-        return data[:10]
+        return data[:6]
     except:
         return []
 
-# ===== LOGIN PAGE =====
-@app.route("/", methods=["GET", "POST"])
-def login():
-    if request.method == "POST":
-        username = request.form["username"]
-        password = request.form["password"]
-
-        if username in users and users[username]["password"] == password:
-            session["user"] = username
-            return redirect("/dashboard")
-
-        return "Invalid login"
-
+# ===== LANDING PAGE =====
+@app.route("/")
+def home():
     return """
-    <h2>Login</h2>
-    <form method="POST">
-        <input name="username" placeholder="Username" required><br><br>
-        <input name="password" type="password" placeholder="Password" required><br><br>
-        <button>Login</button>
-    </form>
-    <a href="/signup">Create Account</a>
-    """
+<!DOCTYPE html>
+<html>
+<head>
+<title>CryptoPilot India</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<style>
+body{
+    margin:0;
+    font-family:Segoe UI;
+    background:linear-gradient(135deg,#0B0F1A,#111827);
+    color:white;
+}
+
+/* NAV */
+.nav{
+    padding:15px;
+    display:flex;
+    justify-content:space-between;
+}
+.logo{
+    color:#6366F1;
+    font-weight:bold;
+}
+.btn{
+    background:#6366F1;
+    padding:8px 15px;
+    border-radius:6px;
+    color:white;
+    text-decoration:none;
+}
+
+/* HERO */
+.hero{
+    text-align:center;
+    padding:80px 20px;
+}
+.hero h1{
+    font-size:40px;
+}
+.hero span{
+    color:#6366F1;
+}
+
+/* SECTION */
+.section{
+    padding:50px 20px;
+    text-align:center;
+}
+.card{
+    background:rgba(255,255,255,0.05);
+    padding:20px;
+    margin:15px;
+    border-radius:12px;
+}
+
+/* LOGIN */
+.login{
+    padding:50px;
+    text-align:center;
+}
+input{
+    padding:10px;
+    width:250px;
+    margin:10px;
+    border:none;
+    border-radius:6px;
+}
+button{
+    padding:10px 20px;
+    background:#6366F1;
+    border:none;
+    color:white;
+    border-radius:6px;
+}
+</style>
+</head>
+
+<body>
+
+<div class="nav">
+<div class="logo">CryptoPilot India 🚀</div>
+<a href="#login" class="btn">Login</a>
+</div>
+
+<div class="hero">
+<h1>Future of <span>AI Crypto</span> in India</h1>
+<p>Track, Predict & Grow your crypto portfolio in ₹</p>
+</div>
+
+<div class="section">
+<h2>Why CryptoPilot?</h2>
+<div class="card">📊 Live Crypto Prices (₹)</div>
+<div class="card">🤖 AI Predictions</div>
+<div class="card">🔐 Secure Portfolio</div>
+</div>
+
+<div class="section">
+<h2>Built for India 🇮🇳</h2>
+<div class="card">All values in INR ₹</div>
+<div class="card">Simple UI anyone can use</div>
+</div>
+
+<div id="login" class="login">
+<h2>Login / Signup</h2>
+
+<form method="POST" action="/login">
+<input name="username" placeholder="Username"><br>
+<input name="password" type="password" placeholder="Password"><br>
+<button>Login</button>
+</form>
+
+<br>
+
+<form method="POST" action="/signup">
+<input name="username" placeholder="New Username"><br>
+<input name="password" type="password" placeholder="New Password"><br>
+<button>Create Account</button>
+</form>
+
+</div>
+
+</body>
+</html>
+"""
+
+# ===== LOGIN =====
+@app.route("/login", methods=["POST"])
+def login():
+    u=request.form["username"]
+    p=request.form["password"]
+
+    conn=sqlite3.connect("users.db")
+    c=conn.cursor()
+    c.execute("SELECT * FROM users WHERE username=? AND password=?",(u,p))
+    user=c.fetchone()
+    conn.close()
+
+    if user:
+        session["user"]=u
+        return redirect("/dashboard")
+
+    return "Invalid Login"
 
 # ===== SIGNUP =====
-@app.route("/signup", methods=["GET", "POST"])
+@app.route("/signup", methods=["POST"])
 def signup():
-    if request.method == "POST":
-        username = request.form["username"]
-        password = request.form["password"]
+    u=request.form["username"]
+    p=request.form["password"]
 
-        if username in users:
-            return "User already exists"
+    conn=sqlite3.connect("users.db")
+    c=conn.cursor()
+    c.execute("INSERT INTO users VALUES (?,?,?)",(u,p,0))
+    conn.commit()
+    conn.close()
 
-        users[username] = {"password": password, "balance": 0}
-        return redirect("/")
-
-    return """
-    <h2>Signup</h2>
-    <form method="POST">
-        <input name="username" placeholder="Username" required><br><br>
-        <input name="password" type="password" required><br><br>
-        <button>Create</button>
-    </form>
-    """
+    return redirect("/")
 
 # ===== DASHBOARD =====
 @app.route("/dashboard")
@@ -69,127 +193,33 @@ def dashboard():
         return redirect("/")
 
     return """
-<!DOCTYPE html>
-<html>
-<head>
-<title>CryptoPilot India</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <h2>Welcome to CryptoPilot India 🚀</h2>
+    <a href="/logout">Logout</a>
+    <div id="data"></div>
 
-<style>
-body {background:#0B0F1A;color:white;font-family:Arial;}
-.card {background:#111827;padding:15px;margin:10px;border-radius:10px;}
-button {background:#6366F1;color:white;border:none;padding:10px;}
-</style>
-</head>
-
-<body>
-
-<h2>CryptoPilot India 🚀</h2>
-<a href="/logout">Logout</a>
-
-<div class="card">
-<h3>Balance</h3>
-<p id="balance">₹ 0</p>
-<input id="amt" placeholder="Enter ₹">
-<button onclick="add()">Add</button>
-<button onclick="remove()">Withdraw</button>
-</div>
-
-<div class="card">
-<h3>Crypto</h3>
-<div id="list"></div>
-</div>
-
-<div class="card">
-<h3>Chart</h3>
-<canvas id="chart"></canvas>
-</div>
-
-<script>
-let chart;
-
-async function load(){
-    let res = await fetch("/data");
-    let data = await res.json();
-
-    let html="";
-    let labels=[];
-    let prices=[];
-
-    data.forEach(c=>{
-        html+=`<p>${c.name} ₹ ${c.current_price}</p>`;
-        labels.push(c.name);
-        prices.push(c.current_price);
-    });
-
-    document.getElementById("list").innerHTML=html;
-
-    if(chart) chart.destroy();
-
-    chart=new Chart(document.getElementById("chart"),{
-        type:"bar",
-        data:{labels:labels,datasets:[{data:prices}]}
-    });
-}
-
-async function add(){
-    let val=document.getElementById("amt").value;
-    await fetch("/add?amt="+val);
-    getBalance();
-}
-
-async function remove(){
-    let val=document.getElementById("amt").value;
-    await fetch("/remove?amt="+val);
-    getBalance();
-}
-
-async function getBalance(){
-    let res=await fetch("/balance");
-    let data=await res.json();
-    document.getElementById("balance").innerText="₹ "+data.balance;
-}
-
-load();
-getBalance();
-setInterval(load,60000);
-</script>
-
-</body>
-</html>
-"""
-
-# ===== BALANCE API =====
-@app.route("/balance")
-def balance():
-    user = session.get("user")
-    return jsonify({"balance": users[user]["balance"]})
-
-@app.route("/add")
-def add():
-    user = session.get("user")
-    amt = float(request.args.get("amt", 0))
-    users[user]["balance"] += amt
-    return "ok"
-
-@app.route("/remove")
-def remove():
-    user = session.get("user")
-    amt = float(request.args.get("amt", 0))
-    if users[user]["balance"] >= amt:
-        users[user]["balance"] -= amt
-    return "ok"
+    <script>
+    async function load(){
+        let res=await fetch("/data");
+        let data=await res.json();
+        let html="";
+        data.forEach(c=>{
+            html+=`<p>${c.name} ₹ ${c.current_price}</p>`;
+        });
+        document.getElementById("data").innerHTML=html;
+    }
+    load();
+    </script>
+    """
 
 # ===== DATA =====
 @app.route("/data")
 def data():
     return jsonify(get_crypto())
 
-# ===== LOGOUT =====
 @app.route("/logout")
 def logout():
     session.clear()
     return redirect("/")
 
-if __name__ == "__main__":
+if __name__=="__main__":
     app.run()
