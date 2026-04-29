@@ -1,79 +1,109 @@
-from flask import Flask, render_template_string, jsonify
+from flask import Flask, render_template_string, session, redirect, request
+from flask_socketio import SocketIO, emit
 import requests
 import time
+import threading
 
 app = Flask(__name__)
+app.secret_key = "cryptopilot_vip"
+socketio = SocketIO(app, cors_allowed_origins="*")
 
-cache = {"time": 0, "btc": 0}
-CACHE_TIME = 30
-
+# ---------------- LIVE PRICE ----------------
 def get_btc():
-    global cache
-
-    if time.time() - cache["time"] < CACHE_TIME:
-        return cache["btc"]
-
     try:
         url = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=inr"
-        data = requests.get(url, timeout=5).json()
-        price = data["bitcoin"]["inr"]
-
-        cache["btc"] = price
-        cache["time"] = time.time()
-        return price
-
+        return requests.get(url, timeout=5).json()["bitcoin"]["inr"]
     except:
-        return cache["btc"] if cache["btc"] else 0
+        return 0
 
+# ---------------- BACKGROUND STREAM ----------------
+def price_stream():
+    while True:
+        price = get_btc()
+        socketio.emit("price_update", {"btc": price})
+        socketio.sleep(3)   # REAL-TIME STREAM (NO MANUAL REFRESH)
 
+# ---------------- LOGIN (simple) ----------------
+@app.route("/login", methods=["GET","POST"])
+def login():
+    if request.method == "POST":
+        session["user"] = request.form["user"]
+        return redirect("/")
+    return """
+    <h2>CryptoPilot Login</h2>
+    <form method='post'>
+        <input name='user' placeholder='username'>
+        <button>Login</button>
+    </form>
+    """
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect("/login")
+
+# ---------------- DASHBOARD ----------------
+@app.route("/")
+def home():
+    if "user" not in session:
+        return redirect("/login")
+    return render_template_string(HTML, user=session["user"])
+
+# ---------------- UI ----------------
 HTML = """
 <!DOCTYPE html>
 <html>
 <head>
-<title>Crypto Palette India</title>
+<title>CryptoPilot India VIP</title>
+<script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
 
 <style>
 body{
     margin:0;
     font-family:Arial;
-    background:black;
+    background:#050814;
     color:white;
     overflow:hidden;
 }
 
 /* SPACE BACKGROUND */
-.stars, .stars2, .stars3 {
-  position:absolute;
-  width:100%;
-  height:100%;
-  display:block;
-  background:transparent;
+.bg{
+    position:absolute;
+    width:100%;
+    height:100%;
+    overflow:hidden;
 }
 
-.stars {
-  background: radial-gradient(white 1px, transparent 1px);
-  background-size:50px 50px;
-  animation:moveStars 60s linear infinite;
-  opacity:0.2;
+.star{
+    position:absolute;
+    width:2px;
+    height:2px;
+    background:white;
+    opacity:0.3;
+    animation:move 25s linear infinite;
 }
 
-.stars2 {
-  background: radial-gradient(#22c55e 1px, transparent 1px);
-  background-size:80px 80px;
-  animation:moveStars 100s linear infinite;
-  opacity:0.2;
+@keyframes move{
+    from{transform:translateY(0);}
+    to{transform:translateY(-1000px);}
 }
 
-.stars3 {
-  background: radial-gradient(#3b82f6 1px, transparent 1px);
-  background-size:120px 120px;
-  animation:moveStars 150s linear infinite;
-  opacity:0.15;
+/* FLOATING PLANETS */
+.planet{
+    position:absolute;
+    border-radius:50%;
+    opacity:0.7;
+    animation:float 8s ease-in-out infinite;
 }
 
-@keyframes moveStars{
-  from{transform:translateY(0);}
-  to{transform:translateY(-1000px);}
+.p1{width:100px;height:100px;background:radial-gradient(circle,#22c55e,#065f46);top:20%;left:70%;}
+.p2{width:130px;height:130px;background:radial-gradient(circle,#3b82f6,#1e3a8a);top:60%;left:10%;}
+.p3{width:70px;height:70px;background:radial-gradient(circle,#f59e0b,#7c2d12);top:40%;left:40%;}
+
+@keyframes float{
+    0%{transform:translateY(0);}
+    50%{transform:translateY(-25px);}
+    100%{transform:translateY(0);}
 }
 
 /* SIDEBAR */
@@ -84,174 +114,90 @@ body{
     background:rgba(15,23,42,0.9);
     padding:20px;
     backdrop-filter:blur(10px);
-    border-right:1px solid #1f2937;
 }
 
 .logo{
-    text-align:center;
     font-size:22px;
     color:#22c55e;
+    text-align:center;
     font-weight:bold;
 }
 
 .menu div{
+    background:#111827;
     padding:12px;
     margin:10px 0;
-    background:#111827;
     border-radius:10px;
-    cursor:pointer;
-}
-
-.menu div:hover{
-    background:#1f2937;
 }
 
 /* MAIN */
 .main{
     margin-left:280px;
     padding:20px;
-    position:relative;
 }
 
 .title{
-    font-size:28px;
+    font-size:30px;
+    color:#22c55e;
     font-weight:bold;
-}
-
-/* PANELS */
-.panel{
-    display:none;
-    margin-top:20px;
-    background:rgba(17,24,39,0.8);
-    padding:20px;
-    border-radius:15px;
-    border:1px solid #1f2937;
-}
-
-.active{
-    display:block;
 }
 
 /* PRICE */
 .price{
-    font-size:40px;
+    font-size:50px;
     color:#22c55e;
     text-shadow:0 0 15px #22c55e;
-}
-
-/* FLOATING EFFECT */
-.floating-bitcoin{
-    position:absolute;
-    top:50%;
-    left:60%;
-    font-size:50px;
-    opacity:0.2;
-    animation:float 6s ease-in-out infinite;
-}
-
-@keyframes float{
-    0%{transform:translateY(0);}
-    50%{transform:translateY(-30px);}
-    100%{transform:translateY(0);}
 }
 </style>
 </head>
 
 <body>
 
-<div class="stars"></div>
-<div class="stars2"></div>
-<div class="stars3"></div>
+<div class="bg">
+<div class="planet p1"></div>
+<div class="planet p2"></div>
+<div class="planet p3"></div>
+</div>
 
 <div class="sidebar">
-    <div class="logo">Crypto Palette</div>
-
-    <div class="menu">
-        <div onclick="openTab('dashboard')">Dashboard</div>
-        <div onclick="openTab('markets')">Markets</div>
-        <div onclick="openTab('portfolio')">Portfolio</div>
-        <div onclick="openTab('wallet')">Wallet</div>
-        <div onclick="openTab('settings')">Settings</div>
-    </div>
+<div class="logo">CryptoPilot VIP 🚀</div>
+<div class="menu">
+<div>Dashboard</div>
+<div>Markets</div>
+<div>Portfolio</div>
+<div>Wallet</div>
+<div>Settings</div>
+</div>
 </div>
 
 <div class="main">
+<div class="title">Welcome {{user}}</div>
 
-    <div class="title">Horizon Crypto Dashboard (INR)</div>
-
-    <div id="dashboard" class="panel active">
-        <h2>Bitcoin Live Price</h2>
-        <div class="price" id="btc">Loading...</div>
-    </div>
-
-    <div id="markets" class="panel">
-        <h2>Markets</h2>
-        <p>Bitcoin: ₹ <span id="btc2"></span></p>
-    </div>
-
-    <div id="portfolio" class="panel">
-        <h2>Portfolio</h2>
-        <p>Your crypto assets will appear here.</p>
-    </div>
-
-    <div id="wallet" class="panel">
-        <h2>Wallet</h2>
-        <p>Wallet balance system coming soon.</p>
-    </div>
-
-    <div id="settings" class="panel">
-        <h2>Settings</h2>
-        <p>Theme & preferences.</p>
-    </div>
-
+<h2>Bitcoin Live (REAL TIME)</h2>
+<div class="price" id="btc">Connecting...</div>
 </div>
 
-<div class="floating-bitcoin">₿</div>
-
 <script>
+var socket = io();
 
-/* TAB SYSTEM */
-function openTab(tab){
-    let panels = document.querySelectorAll(".panel");
-    panels.forEach(p => p.classList.remove("active"));
-    document.getElementById(tab).classList.add("active");
-}
-
-/* LIVE PRICE UPDATE */
-async function update(){
-    try{
-        let res = await fetch("/price");
-        let data = await res.json();
-
-        document.getElementById("btc").innerText =
-            "₹ " + data.btc.toLocaleString();
-
-        document.getElementById("btc2").innerText =
-            data.btc.toLocaleString();
-
-    } catch(e){}
-}
-
-/* AUTO UPDATE */
-update();
-setInterval(update, 5000);
-
+socket.on("price_update", function(data){
+    document.getElementById("btc").innerText =
+        "₹ " + data.btc.toLocaleString();
+});
 </script>
 
 </body>
 </html>
 """
 
+# ---------------- SOCKET START ----------------
+@socketio.on("connect")
+def connect():
+    print("Client connected")
 
-@app.route("/")
-def home():
-    return render_template_string(HTML)
+# start background thread
+socketio.start_background_task(price_stream)
 
-
-@app.route("/price")
-def price():
-    return jsonify({"btc": get_btc()})
-
-
+# ---------------- RUN ----------------
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    socketio.run(app, host="0.0.0.0", port=5000)
