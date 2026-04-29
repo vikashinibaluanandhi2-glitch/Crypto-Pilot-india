@@ -1,206 +1,195 @@
-from flask import Flask
+from flask import Flask, request, redirect, session, jsonify
 import urllib.request, json
 
 app = Flask(__name__)
+app.secret_key = "secret123"   # change later
 
-# 🔥 Get Live Crypto Price in INR
-def get_price():
+# ===== SIMPLE DATABASE (temporary) =====
+users = {}
+
+# ===== GET CRYPTO =====
+def get_crypto():
     try:
-        url = "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=inr"
+        url = "https://api.coingecko.com/api/v3/coins/markets?vs_currency=inr"
         response = urllib.request.urlopen(url)
         data = json.loads(response.read())
-        return data["ethereum"]["inr"]
+        return data[:10]
     except:
-        return 200000  # fallback
+        return []
 
-@app.route("/")
-def home():
-    eth_price = get_price()
+# ===== LOGIN PAGE =====
+@app.route("/", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        username = request.form["username"]
+        password = request.form["password"]
 
-    return f"""
+        if username in users and users[username]["password"] == password:
+            session["user"] = username
+            return redirect("/dashboard")
+
+        return "Invalid login"
+
+    return """
+    <h2>Login</h2>
+    <form method="POST">
+        <input name="username" placeholder="Username" required><br><br>
+        <input name="password" type="password" placeholder="Password" required><br><br>
+        <button>Login</button>
+    </form>
+    <a href="/signup">Create Account</a>
+    """
+
+# ===== SIGNUP =====
+@app.route("/signup", methods=["GET", "POST"])
+def signup():
+    if request.method == "POST":
+        username = request.form["username"]
+        password = request.form["password"]
+
+        if username in users:
+            return "User already exists"
+
+        users[username] = {"password": password, "balance": 0}
+        return redirect("/")
+
+    return """
+    <h2>Signup</h2>
+    <form method="POST">
+        <input name="username" placeholder="Username" required><br><br>
+        <input name="password" type="password" required><br><br>
+        <button>Create</button>
+    </form>
+    """
+
+# ===== DASHBOARD =====
+@app.route("/dashboard")
+def dashboard():
+    if "user" not in session:
+        return redirect("/")
+
+    return """
 <!DOCTYPE html>
 <html>
 <head>
-    <title>CryptoPilot India</title>
+<title>CryptoPilot India</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
-    <style>
-        body {{
-            margin: 0;
-            font-family: 'Segoe UI', sans-serif;
-            background: linear-gradient(135deg, #0B0F1A, #111827);
-            color: white;
-        }}
-
-        .header {{
-            padding: 20px;
-            text-align: center;
-            font-size: 28px;
-            font-weight: bold;
-            color: #6366F1;
-        }}
-
-        .container {{
-            display: flex;
-            flex-wrap: wrap;
-            justify-content: center;
-            gap: 20px;
-            padding: 20px;
-        }}
-
-        .card {{
-            background: rgba(255,255,255,0.05);
-            backdrop-filter: blur(10px);
-            padding: 20px;
-            border-radius: 15px;
-            width: 280px;
-            text-align: center;
-            box-shadow: 0 0 15px rgba(0,0,0,0.3);
-        }}
-
-        button {{
-            background: #6366F1;
-            border: none;
-            padding: 10px 20px;
-            color: white;
-            border-radius: 8px;
-            cursor: pointer;
-        }}
-
-        button:hover {{
-            background: #4f46e5;
-        }}
-
-        input {{
-            padding: 8px;
-            width: 80%;
-            margin-top: 10px;
-            border-radius: 6px;
-            border: none;
-        }}
-    </style>
+<style>
+body {background:#0B0F1A;color:white;font-family:Arial;}
+.card {background:#111827;padding:15px;margin:10px;border-radius:10px;}
+button {background:#6366F1;color:white;border:none;padding:10px;}
+</style>
 </head>
 
 <body>
 
-    <div class="header">CryptoPilot India</div>
+<h2>CryptoPilot India 🚀</h2>
+<a href="/logout">Logout</a>
 
-    <div style="text-align:center;">
-        <button onclick="connectWallet()">Connect Wallet</button>
-    </div>
+<div class="card">
+<h3>Balance</h3>
+<p id="balance">₹ 0</p>
+<input id="amt" placeholder="Enter ₹">
+<button onclick="add()">Add</button>
+<button onclick="remove()">Withdraw</button>
+</div>
 
-    <div class="container">
+<div class="card">
+<h3>Crypto</h3>
+<div id="list"></div>
+</div>
 
-        <div class="card">
-            <h3>Live ETH Price</h3>
-            <p id="livePrice">₹ {eth_price}</p>
-        </div>
-
-        <div class="card">
-            <h3>Total Balance</h3>
-            <p id="balance">₹ 0</p>
-        </div>
-
-        <div class="card">
-            <h3>Wallet</h3>
-            <p id="wallet">Not Connected</p>
-        </div>
-
-        <div class="card">
-            <h3>Invest / Withdraw</h3>
-            <input id="amount" placeholder="Enter ₹">
-            <br><br>
-            <button onclick="invest()">Invest</button>
-            <button onclick="withdraw()">Withdraw</button>
-        </div>
-
-        <div class="card">
-            <h3>AI Suggestion 🤖</h3>
-            <p>Market stable — hold assets</p>
-        </div>
-
-    </div>
-
-<script src="https://cdn.jsdelivr.net/npm/ethers/dist/ethers.min.js"></script>
+<div class="card">
+<h3>Chart</h3>
+<canvas id="chart"></canvas>
+</div>
 
 <script>
-    let ethPrice = {eth_price};
-    let currentBalance = 0;
+let chart;
 
-    async function connectWallet() {{
-        if (window.ethereum) {{
-            const accounts = await window.ethereum.request({{
-                method: 'eth_requestAccounts'
-            }});
+async function load(){
+    let res = await fetch("/data");
+    let data = await res.json();
 
-            document.getElementById("wallet").innerText = accounts[0];
+    let html="";
+    let labels=[];
+    let prices=[];
 
-            const provider = new ethers.providers.Web3Provider(window.ethereum);
-            const balance = await provider.getBalance(accounts[0]);
-            const eth = parseFloat(ethers.utils.formatEther(balance));
+    data.forEach(c=>{
+        html+=`<p>${c.name} ₹ ${c.current_price}</p>`;
+        labels.push(c.name);
+        prices.push(c.current_price);
+    });
 
-            currentBalance = eth * ethPrice;
+    document.getElementById("list").innerHTML=html;
 
-            document.getElementById("balance").innerText =
-                "₹ " + currentBalance.toFixed(2);
-        }} else {{
-            alert("Install MetaMask");
-        }}
-    }}
+    if(chart) chart.destroy();
 
-    // 🔄 AUTO UPDATE PRICE
-    async function updatePrice() {{
-        try {{
-            let response = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=inr");
-            let data = await response.json();
+    chart=new Chart(document.getElementById("chart"),{
+        type:"bar",
+        data:{labels:labels,datasets:[{data:prices}]}
+    });
+}
 
-            ethPrice = data.ethereum.inr;
+async function add(){
+    let val=document.getElementById("amt").value;
+    await fetch("/add?amt="+val);
+    getBalance();
+}
 
-            document.getElementById("livePrice").innerText =
-                "₹ " + ethPrice;
-        }} catch (e) {{
-            console.log("Update failed");
-        }}
-    }}
+async function remove(){
+    let val=document.getElementById("amt").value;
+    await fetch("/remove?amt="+val);
+    getBalance();
+}
 
-    setInterval(updatePrice, 60000);
+async function getBalance(){
+    let res=await fetch("/balance");
+    let data=await res.json();
+    document.getElementById("balance").innerText="₹ "+data.balance;
+}
 
-    function invest() {{
-        let amt = parseFloat(document.getElementById("amount").value);
-
-        if (!amt || amt <= 0) {{
-            alert("Enter valid amount");
-            return;
-        }}
-
-        currentBalance += amt;
-
-        document.getElementById("balance").innerText =
-            "₹ " + currentBalance.toFixed(2);
-    }}
-
-    function withdraw() {{
-        let amt = parseFloat(document.getElementById("amount").value);
-
-        if (!amt || amt <= 0) {{
-            alert("Enter valid amount");
-            return;
-        }}
-
-        if (amt > currentBalance) {{
-            alert("Not enough balance");
-            return;
-        }}
-
-        currentBalance -= amt;
-
-        document.getElementById("balance").innerText =
-            "₹ " + currentBalance.toFixed(2);
-    }}
+load();
+getBalance();
+setInterval(load,60000);
 </script>
 
 </body>
 </html>
 """
 
+# ===== BALANCE API =====
+@app.route("/balance")
+def balance():
+    user = session.get("user")
+    return jsonify({"balance": users[user]["balance"]})
+
+@app.route("/add")
+def add():
+    user = session.get("user")
+    amt = float(request.args.get("amt", 0))
+    users[user]["balance"] += amt
+    return "ok"
+
+@app.route("/remove")
+def remove():
+    user = session.get("user")
+    amt = float(request.args.get("amt", 0))
+    if users[user]["balance"] >= amt:
+        users[user]["balance"] -= amt
+    return "ok"
+
+# ===== DATA =====
+@app.route("/data")
+def data():
+    return jsonify(get_crypto())
+
+# ===== LOGOUT =====
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect("/")
+
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run()
