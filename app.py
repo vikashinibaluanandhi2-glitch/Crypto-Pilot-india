@@ -1,7 +1,33 @@
-from flask import Flask, render_template_string
+from flask import Flask, render_template_string, jsonify
 import requests
+import time
 
 app = Flask(__name__)
+
+# cache system (prevents API spam)
+cache = {"time": 0, "btc": 0}
+CACHE_SECONDS = 30
+
+
+def get_btc_inr():
+    global cache
+
+    if time.time() - cache["time"] < CACHE_SECONDS:
+        return cache["btc"]
+
+    try:
+        url = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=inr"
+        data = requests.get(url, timeout=5).json()
+        price = data["bitcoin"]["inr"]
+
+        cache["btc"] = price
+        cache["time"] = time.time()
+
+        return price
+
+    except:
+        return cache["btc"] if cache["btc"] else 0
+
 
 HTML = """
 <!DOCTYPE html>
@@ -13,35 +39,36 @@ HTML = """
 body{
     margin:0;
     font-family:Arial;
-    background:#0a0f1f;
+    background:#0b1220;
     color:white;
     display:flex;
 }
 
-/* SIDEBAR (ORIZON STYLE) */
+/* SIDEBAR (Horizon VIP style feel) */
 .sidebar{
-    width:220px;
-    background:#0f172a;
+    width:260px;
     height:100vh;
+    background:#0f172a;
     padding:20px;
     position:fixed;
+    border-right:1px solid #1f2937;
 }
 
-.sidebar h2{
+.logo{
+    font-size:22px;
+    font-weight:bold;
     color:#22c55e;
     text-align:center;
-}
-
-.menu{
-    margin-top:30px;
+    margin-bottom:30px;
 }
 
 .menu div{
     padding:12px;
-    margin:8px 0;
+    margin:10px 0;
     background:#111827;
     border-radius:10px;
     cursor:pointer;
+    transition:0.2s;
 }
 
 .menu div:hover{
@@ -50,50 +77,52 @@ body{
 
 /* MAIN AREA */
 .main{
-    margin-left:240px;
+    margin-left:280px;
     padding:20px;
     width:100%;
 }
 
-.header{
-    font-size:26px;
+.title{
+    font-size:28px;
     font-weight:bold;
     margin-bottom:20px;
 }
 
-/* CARDS */
+/* DASH CARDS */
 .cards{
-    display:grid;
-    grid-template-columns:repeat(3,1fr);
+    display:flex;
     gap:20px;
 }
 
 .card{
     background:#111827;
-    padding:20px;
+    padding:25px;
     border-radius:15px;
-    text-align:center;
-    box-shadow:0 0 10px rgba(0,0,0,0.5);
+    width:320px;
+    box-shadow:0 0 15px rgba(0,0,0,0.5);
+    border:1px solid #1f2937;
 }
 
 .price{
-    font-size:22px;
+    font-size:34px;
     color:#22c55e;
     margin-top:10px;
 }
 
-.table{
-    margin-top:30px;
-    background:#111827;
-    padding:15px;
-    border-radius:15px;
+.sub{
+    color:#9ca3af;
+    font-size:13px;
 }
 
-.row{
-    display:flex;
-    justify-content:space-between;
-    padding:10px;
-    border-bottom:1px solid #1f2937;
+.status{
+    margin-top:15px;
+    font-size:12px;
+    color:#9ca3af;
+}
+
+/* glow effect like trading apps */
+.glow{
+    text-shadow:0 0 10px #22c55e;
 }
 </style>
 </head>
@@ -101,62 +130,56 @@ body{
 <body>
 
 <div class="sidebar">
-    <h2>Crypto Palette</h2>
+    <div class="logo">Crypto Palette</div>
     <div class="menu">
         <div>Dashboard</div>
         <div>Markets</div>
         <div>Portfolio</div>
         <div>Wallet</div>
+        <div>Settings</div>
     </div>
 </div>
 
 <div class="main">
 
-    <div class="header">Crypto Dashboard (INR Live)</div>
+    <div class="title">Horizon-style Crypto Dashboard (INR)</div>
 
     <div class="cards">
-        <div class="card">
-            <h3>Bitcoin</h3>
-            <div class="price" id="btc">Loading...</div>
-        </div>
 
         <div class="card">
-            <h3>Ethereum</h3>
-            <div class="price" id="eth">Loading...</div>
+            <div class="sub">Bitcoin (BTC)</div>
+            <div class="price glow" id="btc">Loading...</div>
+            <div class="sub">Live price in Indian Rupees</div>
         </div>
 
-        <div class="card">
-            <h3>Dogecoin</h3>
-            <div class="price" id="doge">Loading...</div>
-        </div>
     </div>
 
-    <div class="table">
-        <h3>Market Overview</h3>
-        <div class="row"><span>BTC</span><span id="btc2"></span></div>
-        <div class="row"><span>ETH</span><span id="eth2"></span></div>
-        <div class="row"><span>DOGE</span><span id="doge2"></span></div>
-    </div>
+    <div class="status" id="status"></div>
 
 </div>
 
 <script>
 
 async function update(){
-    let res = await fetch("/prices");
-    let data = await res.json();
+    try{
+        let res = await fetch("/price");
+        let data = await res.json();
 
-    document.getElementById("btc").innerText = "₹ " + data.btc;
-    document.getElementById("eth").innerText = "₹ " + data.eth;
-    document.getElementById("doge").innerText = "₹ " + data.doge;
+        document.getElementById("btc").innerText =
+            "₹ " + data.btc.toLocaleString();
 
-    document.getElementById("btc2").innerText = "₹ " + data.btc;
-    document.getElementById("eth2").innerText = "₹ " + data.eth;
-    document.getElementById("doge2").innerText = "₹ " + data.doge;
+        document.getElementById("status").innerText =
+            "Last updated: " + new Date().toLocaleTimeString();
+
+    }catch(e){
+        document.getElementById("status").innerText =
+            "Connecting to market data...";
+    }
 }
 
+// auto update system (NO manual refresh ever)
 update();
-setInterval(update, 4000);
+setInterval(update, 5000);
 
 </script>
 
@@ -164,20 +187,18 @@ setInterval(update, 4000);
 </html>
 """
 
+
 @app.route("/")
 def home():
     return render_template_string(HTML)
 
-@app.route("/prices")
-def prices():
-    url = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,dogecoin&vs_currencies=inr"
-    data = requests.get(url).json()
 
-    return {
-        "btc": f"{data['bitcoin']['inr']:,}",
-        "eth": f"{data['ethereum']['inr']:,}",
-        "doge": f"{data['dogecoin']['inr']:,}"
-    }
+@app.route("/price")
+def price():
+    return jsonify({
+        "btc": get_btc_inr()
+    })
+
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(host="0.0.0.0", port=5000)
